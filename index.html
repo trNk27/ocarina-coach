@@ -166,6 +166,17 @@ h3{font-size:.78rem;letter-spacing:.08em;text-transform:uppercase;color:var(--mu
 .padbtn{width:48px;height:48px;border-radius:50%;border:0;cursor:pointer;font-weight:700;font-size:1rem;display:grid;place-items:center;box-shadow:0 2px 0 rgba(0,0,0,.18)}
 .padbtn:active{transform:translateY(1px);box-shadow:none}
 .padbtn.c{background:var(--cbtn);color:var(--cbtn-ink)}
+.g.sh{background:var(--muted);color:var(--surface);border-radius:6px;width:26px;height:18px}
+.g.f{background:var(--ink);color:var(--surface)}
+.padbtn.f{background:var(--ink);color:var(--surface)}
+.padbtn.sh{background:var(--muted);color:var(--surface);border-radius:12px;width:72px;height:36px}
+textarea{width:100%;min-height:150px;border:1px solid var(--line);background:var(--surface);color:var(--ink);border-radius:10px;padding:10px 11px;font:13px/1.5 var(--f-mono);resize:vertical}
+.ctrlmap{display:grid;grid-template-columns:repeat(auto-fill,minmax(118px,1fr));gap:6px;margin-top:8px}
+.ctrlmap label{display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:10px;background:var(--surface-2);font-size:.85rem}
+.ctrlmap select{flex:1;min-width:0;border:1px solid var(--line);background:var(--surface);color:var(--ink);border-radius:8px;padding:4px;font:500 .8rem var(--f-mono)}
+.preview{display:flex;flex-direction:column;gap:6px;margin:10px 0}
+.preview div{display:flex;flex-wrap:wrap;align-items:center;gap:4px;padding:6px 8px;border-radius:10px;background:var(--surface-2);font-size:.85rem}
+.preview b{margin-right:6px;font-weight:600}
 .padbtn.a{background:var(--abtn);color:#fff;width:58px;height:58px;font-size:1.2rem}
 .seq{display:flex;flex-wrap:wrap;gap:5px;min-height:34px;align-items:center;padding:6px 8px;border:1px solid var(--line);border-radius:12px}
 .seq .ph{color:var(--muted);font-size:.85rem}
@@ -266,6 +277,10 @@ const BTN = {
   L:{midi:71, glyph:'◀', cls:'c', name:'C-left'},
   U:{midi:74, glyph:'▲', cls:'c', name:'C-up'}
 };
+/* Newer controller layout (L R A X Y). Each button resolves to one of the five game pitches above; editable in Songs. */
+const NEWBTN = {sL:{label:'L', cls:'sh'}, sR:{label:'R', cls:'sh'}, sA:{label:'A', cls:'f'}, sX:{label:'X', cls:'f'}, sY:{label:'Y', cls:'f'}};
+const DEFAULT_MAP = {sL:'A', sR:'D', sA:'R', sY:'L', sX:'U'};
+const PITCH_KEYS = ['A','D','R','L','U'];
 const SONGS = [
   {id:'lullaby', name:"Zelda's Lullaby", group:'Songs'},
   {id:'epona', name:"Epona's Song", group:'Songs'},
@@ -307,12 +322,14 @@ function preset(kind){
   const steps = notes.map((n, i) => { const open = new Set(release.slice(0, i)); return {id:'s' + i, closed: all.filter(id => !open.has(id)), note:n, cents:0, confirmed:false}; });
   return {holes, steps};
 }
-function freshState(kind){ const p = preset(kind || '12'); return {v:1, preset: kind || '12', holes:p.holes, steps:p.steps, songs:{}, custom:[], shift:0, updatedAt:0}; }
+function freshState(kind){ const p = preset(kind || '12'); return {v:1, preset: kind || '12', holes:p.holes, steps:p.steps, songs:{}, custom:[], shift:0, ctrl:'lrxya', ctrlMap:Object.assign({}, DEFAULT_MAP), updatedAt:0}; }
 function normalize(s){
   if (!s || typeof s !== 'object' || !Array.isArray(s.holes) || !Array.isArray(s.steps) || !s.steps.length) return freshState('12');
   s.songs = s.songs && typeof s.songs === 'object' ? s.songs : {};
   s.custom = Array.isArray(s.custom) ? s.custom : [];
   s.shift = Number.isFinite(s.shift) ? s.shift : 0;
+  s.ctrl = s.ctrl === 'n64' ? 'n64' : 'lrxya';
+  s.ctrlMap = Object.assign({}, DEFAULT_MAP, s.ctrlMap || {});
   s.updatedAt = s.updatedAt || 0;
   return s;
 }
@@ -853,10 +870,14 @@ function currentSong(){ return allSongs().find(s => s.id === ui.song.id) || null
 function songNotes(sg){
   if (sg.custom) return (sg.notes || []).map(m => ({midi:m}));
   const rec = state.songs[sg.id];
-  return (rec && rec.seq ? rec.seq : []).filter(b => BTN[b]).map(b => ({midi: BTN[b].midi + state.shift, btn:b}));
+  return (rec && rec.seq ? rec.seq : []).filter(t => canon(t)).map(t => ({midi: tokMidi(t), btn:t}));
 }
 function isUnlocked(sg){ return songNotes(sg).length > 0; }
-function glyph(b){ const d = BTN[b]; return el('span', {class:'g ' + d.cls, 'aria-label': d.name}, d.glyph); }
+function canon(t){ if (BTN[t]) return t; if (NEWBTN[t]){ const k = state.ctrlMap[t] || DEFAULT_MAP[t]; return BTN[k] ? k : null; } return null; }
+function tokMidi(t){ const c = canon(t); return c ? BTN[c].midi + state.shift : null; }
+function tokInfo(t){ if (BTN[t]) return {glyph:BTN[t].glyph, cls:BTN[t].cls, name:BTN[t].name}; const n = NEWBTN[t]; return n ? {glyph:n.label, cls:n.cls, name:n.label + ' button'} : {glyph:'?', cls:'f', name:'?'}; }
+function layoutTokens(){ return state.ctrl === 'n64' ? PITCH_KEYS.slice() : ['sL','sR','sA','sX','sY']; }
+function glyph(t){ const d = tokInfo(t); return el('span', {class:'g ' + d.cls, 'aria-label': d.name}, d.glyph); }
 function stopPlay(){ if (ui.playing){ clearTimeout(ui.playing); ui.playing = null; } }
 function autoFit(){
   const base = [62,65,69,71,74];
@@ -881,15 +902,101 @@ function keyRow(){
     el('button', {type:'button', style:'padding:0 10px;font-family:var(--f-body)', onclick: autoFit}, 'Auto-fit')
   );
 }
+const SONG_KEYS = [['lullaby','lullaby'],['epona','epona'],['saria','saria'],['sun','sun'],['time','time'],['storm','storms'],['minuet','minuet'],['bolero','bolero'],['serenade','serenade'],['nocturne','nocturne'],['requiem','requiem'],['prelude','prelude'],['scarecrow','scarecrow']];
+const ARROWS = {'^':'U','↑':'U','▲':'U','⬆':'U','v':'D','↓':'D','▼':'D','⬇':'D','<':'L','←':'L','◀':'L','⬅':'L','>':'R','→':'R','▶':'R','➡':'R'};
+function lineTokens(line){
+  const t = line.replace(/c[\s\-]?(up|down|left|right)\b/gi, (m, d) => ' C' + d[0].toLowerCase() + ' ');
+  const raw = t.split(/[\s,;:|\/]+/).map(w => w.replace(/^[\(\[\{"'„“.]+|[\)\]\}"'“”.]+$/g, '')).filter(Boolean);
+  const isNew = raw.some(w => /^[XYLRxy]$/.test(w));
+  const out = [];
+  for (const w of raw){
+    if (/^[\^v<>↑↓←→▲▼◀▶⬆⬇⬅➡️]+$/.test(w)){ for (const ch of w) if (ARROWS[ch]) out.push(ARROWS[ch]); continue; }
+    const lw = w.toLowerCase();
+    if (/^c[udlr]$/.test(lw)){ out.push({u:'U', d:'D', l:'L', r:'R'}[lw[1]]); continue; }
+    if (['up','down','left','right'].includes(lw)){ out.push({up:'U', down:'D', left:'L', right:'R'}[lw]); continue; }
+    if (/^[xyXY]$/.test(w)){ out.push('s' + w.toUpperCase()); continue; }
+    if (/^[LR]$/.test(w) || (isNew && /^[lr]$/.test(w))){ out.push('s' + w.toUpperCase()); continue; }
+    if (/^[aA]$/.test(w)){ out.push(isNew || state.ctrl !== 'n64' && !raw.some(x => ARROWS[x] || /^c[udlr]$/i.test(x)) ? 'sA' : 'A'); continue; }
+  }
+  return out;
+}
+function parsePaste(text){
+  const found = [], skipped = [];
+  let pending = null;
+  for (const line of String(text || '').split(/\n/)){
+    if (!line.trim()) continue;
+    const low = line.toLowerCase();
+    const key = SONG_KEYS.find(([k]) => low.includes(k));
+    const toks = lineTokens(key ? line.replace(new RegExp(SONGS.find(sg => sg.id === key[1]).name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i'), ' ') : line);
+    if (key && toks.length){ found.push({id:key[1], toks}); pending = null; }
+    else if (key){ pending = key[1]; }
+    else if (toks.length && pending){ found.push({id:pending, toks}); pending = null; }
+    else if (toks.length) skipped.push(line.trim());
+  }
+  const byId = {}; found.forEach(f => { byId[f.id] = f.toks; });
+  return {songs: Object.keys(byId).map(id => ({id, toks: byId[id]})), skipped};
+}
+function controllerBox(){
+  const box = el('div', {class:'keyrow', style:'flex-direction:column;align-items:stretch'});
+  box.append(el('div', {class:'row', style:'justify-content:space-between'},
+    el('span', {class:'lbl'}, 'Game buttons'),
+    el('div', {class:'seg'},
+      el('button', {type:'button', 'aria-pressed': String(state.ctrl !== 'n64'), onclick: () => { state.ctrl = 'lrxya'; commit(); renderSongs(); }}, 'L R A X Y'),
+      el('button', {type:'button', 'aria-pressed': String(state.ctrl === 'n64'), onclick: () => { state.ctrl = 'n64'; commit(); renderSongs(); }}, 'N64 · A + C'))));
+  if (state.ctrl !== 'n64'){
+    const grid = el('div', {class:'ctrlmap'});
+    for (const t of ['sL','sR','sA','sX','sY']){
+      const sel = el('select', {'aria-label': NEWBTN[t].label + ' button plays', onchange: e => { state.ctrlMap[t] = e.target.value; commit(); renderSongs(); refreshStage(); }});
+      PITCH_KEYS.forEach(k => sel.append(el('option', {value:k, selected: state.ctrlMap[t] === k}, nn(BTN[k].midi))));
+      grid.append(el('label', {}, glyph(t), sel));
+    }
+    box.append(grid, el('p', {class:'hint', style:'margin:4px 0 0'}, 'Which in-game note each button plays. If one sounds different in your game, change it here; unlocked songs follow.'));
+  }
+  return box;
+}
+function pasteBox(){
+  const wrap = el('div', {style:'margin:12px 0'});
+  if (!ui.pasteOpen){
+    wrap.append(el('button', {type:'button', class:'btn primary', onclick: () => { ui.pasteOpen = true; renderSongs(); const t = document.getElementById('pastebox'); if (t) t.focus(); }}, 'Unlock songs from a list'));
+    return wrap;
+  }
+  const res = parsePaste(ui.pasteText);
+  const prev = el('div', {class:'preview'});
+  for (const f of res.songs){
+    const sg = SONGS.find(x => x.id === f.id);
+    prev.append(el('div', {}, el('b', {}, sg.name), ...f.toks.map(glyph)));
+  }
+  const ta = el('textarea', {id:'pastebox', placeholder:'Paste or type one song per line, for example:\nSong name: L R A …\n\nAny notation works: L R A X Y, arrows (▲ ▼ ◀ ▶ ^ v < >), C-up / C-down, A.', 'aria-label':'Button sequences'});
+  ta.value = ui.pasteText || '';
+  ta.addEventListener('input', () => { ui.pasteText = ta.value; const pos = ta.selectionStart; renderSongs(); const n = document.getElementById('pastebox'); if (n){ n.focus(); n.setSelectionRange(pos, pos); } });
+  wrap.append(
+    el('p', {class:'hint', style:'margin:0 0 8px'}, 'Copy the button sequences from your game’s song list or any guide and paste them here. Song names are recognised automatically.'),
+    ta,
+    res.songs.length ? prev : null,
+    res.skipped.length ? el('p', {class:'hint', style:'color:var(--warn)'}, res.skipped.length + ' line' + (res.skipped.length > 1 ? 's have' : ' has') + ' buttons but no song name I recognise.') : null,
+    el('div', {class:'row'},
+      el('button', {type:'button', class:'btn primary', disabled: !res.songs.length, onclick: () => {
+        res.songs.forEach(f => { state.songs[f.id] = {seq: f.toks}; });
+        const anyNew = res.songs.some(f => f.toks.some(t => NEWBTN[t]));
+        if (anyNew) state.ctrl = 'lrxya';
+        commit(); ui.pasteOpen = false; ui.pasteText = ''; ui.pasteMsg = res.songs.length + ' song' + (res.songs.length > 1 ? 's' : '') + ' unlocked.'; renderSongs();
+      }}, res.songs.length ? 'Unlock ' + res.songs.length + ' song' + (res.songs.length > 1 ? 's' : '') : 'Unlock'),
+      el('button', {type:'button', class:'btn ghost', onclick: () => { ui.pasteOpen = false; renderSongs(); }}, 'Cancel'))
+  );
+  return wrap;
+}
 function renderSongs(){
   const v = ui.song.view;
   if (v === 'song') return renderSongView();
   if (v === 'edit') return renderSongEdit();
   const p = $('#panel-songs'); p.replaceChildren();
-  const base = Object.keys(BTN).map(b => ({b, m: BTN[b].midi + state.shift}));
+  const base = layoutTokens().map(t => ({b:t, m: tokMidi(t)}));
   const missing = base.filter(o => !fingeringFor(o.m));
   p.append(
-    el('p', {class:'lede'}, 'Unlock a song by entering the buttons your game showed when you learned it. Each button turns into a note and a fingering on your ocarina.'),
+    el('p', {class:'lede'}, 'Each game button becomes a note, and each note a fingering on your ocarina. Unlock songs from a pasted list, or tap a song to enter its buttons.'),
+    pasteBox(),
+    ui.pasteMsg ? el('p', {class:'pill ok', style:'display:inline-block;margin:0 0 10px'}, ui.pasteMsg) : null,
+    controllerBox(),
     keyRow(),
     el('div', {class:'map', style:'margin:0 0 4px'}, ...base.map(o => el('span', {class: fingeringFor(o.m) ? '' : 'miss'}, glyph(o.b), nn(o.m)))),
     missing.length ? el('p', {class:'hint'}, missing.length + ' of the 5 notes have no fingering yet. Try Auto-fit, or add fingerings in Calibrate.') : el('p', {class:'hint'}, 'All 5 notes are playable on your ocarina.')
@@ -935,7 +1042,12 @@ function staffSVG(notes, cur){
     else s += '<line x1="' + (x - 6) + '" x2="' + (x - 6) + '" y1="' + (y + 1) + '" y2="' + (y + 30) + '" stroke="' + col + '" stroke-width="1.4"/>';
     if (SHARP[((o.midi % 12) + 12) % 12]) s += '<text x="' + (x - 16) + '" y="' + (y + 4) + '" font-size="12" fill="' + col + '">♯</text>';
     s += '<text x="' + x + '" y="' + (bot + 12) + '" text-anchor="middle" font-size="11" font-weight="600" font-family="IBM Plex Mono, ui-monospace, monospace" fill="' + col + '">' + nn(o.midi) + '</text>';
-    if (o.btn){ const b = BTN[o.btn]; s += '<circle cx="' + x + '" cy="' + (bot + 30) + '" r="9" fill="' + (b.cls === 'a' ? 'var(--abtn)' : 'var(--cbtn)') + '"/><text x="' + x + '" y="' + (bot + 34) + '" text-anchor="middle" font-size="' + (b.cls === 'a' ? 10 : 8) + '" font-weight="700" fill="' + (b.cls === 'a' ? '#fff' : 'var(--cbtn-ink)') + '">' + b.glyph + '</text>'; }
+    if (o.btn){
+      const b = tokInfo(o.btn);
+      const fill = {a:'var(--abtn)', c:'var(--cbtn)', sh:'var(--muted)', f:'var(--ink)'}[b.cls], ink = {a:'#fff', c:'var(--cbtn-ink)', sh:'var(--surface)', f:'var(--surface)'}[b.cls];
+      s += b.cls === 'sh' ? '<rect x="' + (x - 12) + '" y="' + (bot + 22) + '" width="24" height="16" rx="6" fill="' + fill + '"/>' : '<circle cx="' + x + '" cy="' + (bot + 30) + '" r="9" fill="' + fill + '"/>';
+      s += '<text x="' + x + '" y="' + (bot + 34) + '" text-anchor="middle" font-size="' + (b.cls === 'c' ? 8 : 10) + '" font-weight="700" fill="' + ink + '">' + b.glyph + '</text>';
+    }
     s += '<rect x="' + (x - gap / 2) + '" y="' + top + '" width="' + gap + '" height="' + H + '" fill="transparent" data-i="' + i + '" style="cursor:pointer"/>';
   });
   return s + '</svg>';
@@ -968,7 +1080,7 @@ function renderSongView(){
     staff,
     cur ? el('div', {class:'now'},
       el('div', {class:'bignote'}, nn(cur.midi)),
-      el('div', {}, cur.btn ? el('div', {class:'row', style:'gap:6px'}, glyph(cur.btn), el('span', {class:'sub'}, BTN[cur.btn].name)) : null,
+      el('div', {}, cur.btn ? el('div', {class:'row', style:'gap:6px'}, glyph(cur.btn), el('span', {class:'sub'}, tokInfo(cur.btn).name)) : null,
         el('div', {class:'sub'}, f ? describe(f) : 'No fingering plays this note yet.'))
     ) : null,
     micPanel('song'),
@@ -991,17 +1103,27 @@ function renderSongEdit(){
   const seq = el('div', {class:'seq', 'aria-live':'polite'});
   if (!buf.length) seq.append(el('span', {class:'ph'}, custom ? 'Tap notes below to add them' : 'Tap the buttons in order'));
   buf.forEach(x => seq.append(custom ? el('span', {class:'nchip'}, nn(x)) : glyph(x)));
-  const add = x => { buf.push(x); playNote(custom ? x : BTN[x].midi + state.shift, 0.45); renderSongEdit(); };
+  const add = x => { buf.push(x); playNote(custom ? x : tokMidi(x), 0.45); renderSongEdit(); };
   let input;
   if (custom){
     const notes = [...new Set(state.steps.filter(s => s.note != null).map(s => s.note))].sort((a, b) => a - b);
     input = el('div', {class:'notegrid', style:'margin:12px 0'}, ...notes.map(m => el('button', {type:'button', onclick: () => add(m)}, nn(m))));
   } else {
     const c = (b, col, row) => el('button', {type:'button', class:'padbtn c', style:'grid-column:' + col + ';grid-row:' + row, 'aria-label': BTN[b].name, onclick: () => add(b)}, BTN[b].glyph);
-    input = el('div', {class:'pad'},
-      el('button', {type:'button', class:'padbtn a', 'aria-label':'A', onclick: () => add('A')}, 'A'),
-      el('div', {class:'cgrid'}, c('U', 2, 1), c('L', 1, 2), c('R', 3, 2), c('D', 2, 3))
-    );
+    if (state.ctrl === 'n64'){
+      input = el('div', {class:'pad'},
+        el('button', {type:'button', class:'padbtn a', 'aria-label':'A', onclick: () => add('A')}, 'A'),
+        el('div', {class:'cgrid'}, c('U', 2, 1), c('L', 1, 2), c('R', 3, 2), c('D', 2, 3))
+      );
+    } else {
+      const f = (t, col, row) => el('button', {type:'button', class:'padbtn f', style:'grid-column:' + col + ';grid-row:' + row, 'aria-label': NEWBTN[t].label + ' button', onclick: () => add(t)}, NEWBTN[t].label);
+      input = el('div', {class:'pad', style:'flex-direction:column;gap:14px'},
+        el('div', {class:'row', style:'gap:90px'},
+          el('button', {type:'button', class:'padbtn sh', onclick: () => add('sL')}, 'L'),
+          el('button', {type:'button', class:'padbtn sh', onclick: () => add('sR')}, 'R')),
+        el('div', {class:'cgrid'}, f('sX', 2, 1), f('sY', 1, 2), f('sA', 3, 2))
+      );
+    }
   }
   const nameInput = custom ? el('input', {type:'text', id:'songname', value: ui.song.name || '', placeholder:'Song name', 'aria-label':'Song name', oninput: e => { ui.song.name = e.target.value; }}) : null;
   const save = () => {
@@ -1099,6 +1221,7 @@ function renderHoles(){
 
 /* ---------- boot ---------- */
 setSync('local');
+try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist(); } catch(e){}
 initStage();
 stageRebuild();
 setTab(TABS.includes(location.hash.slice(1)) ? location.hash.slice(1) : 'calibrate', true);
