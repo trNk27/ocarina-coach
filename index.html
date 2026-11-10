@@ -437,7 +437,8 @@ function onPitch(r, t){
   if (ui.tab === 'songs' && ui.song.view === 'song' && ui.listenSong && track.fresh && steady > 120){
     const sg = currentSong(); const notes = sg ? songNotes(sg) : [];
     const want = notes[ui.song.step];
-    if (want && want.midi === n){
+    const wb = want ? bestFingering(want.midi) : null;
+    if (want && (want.midi === n || (wb && wb.played === n))){
       track.fresh = false;
       if (ui.song.step < notes.length - 1){ ui.song.step++; ui.songDone = false; }
       else { ui.songDone = true; }
@@ -695,6 +696,22 @@ function fingeringFor(m){
   const c = state.steps.filter(s => s.note === m);
   return c.find(s => s.confirmed) || c[0] || null;
 }
+/* Exact fingering if there is one; otherwise the same note in another octave, otherwise the nearest pitch. */
+function bestFingering(m){
+  const exact = fingeringFor(m);
+  if (exact) return {step: exact, played: m, exact: true, diff: 0};
+  const have = [...new Set(state.steps.filter(s => s.note != null).map(s => s.note))];
+  if (!have.length) return null;
+  const oct = have.filter(n => (n - m) % 12 === 0).sort((a, b) => Math.abs(a - m) - Math.abs(b - m) || a - b)[0];
+  const near = have.slice().sort((a, b) => Math.abs(a - m) - Math.abs(b - m) || b - a)[0];
+  const played = oct != null && Math.abs(oct - m) <= 12 ? oct : near;
+  return {step: fingeringFor(played), played, exact: false, diff: played - m};
+}
+function diffText(d){
+  if (d === 12) return 'an octave higher'; if (d === -12) return 'an octave lower';
+  if (d % 12 === 0) return Math.abs(d / 12) + ' octaves ' + (d > 0 ? 'higher' : 'lower');
+  const a = Math.abs(d); return a + ' semitone' + (a > 1 ? 's' : '') + ' ' + (d > 0 ? 'higher' : 'lower');
+}
 function refreshStage(){
   let closed = [], sel = null, cap = '';
   if (ui.tab === 'calibrate'){
@@ -709,7 +726,7 @@ function refreshStage(){
     const sg = currentSong();
     if (sg && ui.song.view === 'song'){
       const notes = songNotes(sg), m = notes[ui.song.step];
-      if (m){ const f = fingeringFor(m.midi); closed = f ? f.closed : []; cap = '<b>' + nn(m.midi) + '</b> · note ' + (ui.song.step + 1) + ' of ' + notes.length + (f ? ' · ' + describe(f) : ' · no fingering found for this note'); }
+      if (m){ const b = bestFingering(m.midi); closed = b ? b.step.closed : []; cap = '<b>' + nn(m.midi) + '</b> · note ' + (ui.song.step + 1) + ' of ' + notes.length + (!b ? ' · no fingerings calibrated yet' : b.exact ? ' · ' + describe(b.step) : ' · not on your ocarina, showing closest: <b>' + nn(b.played) + '</b> (' + diffText(b.diff) + ')'); }
     } else cap = 'Pick an unlocked song to step through it here.';
   } else if (ui.tab === 'holes'){
     sel = ui.holeSel;
@@ -1034,6 +1051,7 @@ function staffSVG(notes, cur){
   notes.forEach((o, i) => {
     const x = left + i * gap + gap / 2, d = dia(o.midi), y = yOf(d);
     const ok = !!fingeringFor(o.midi);
+    const sub = ok ? null : bestFingering(o.midi);
     const col = i === cur ? 'var(--accent)' : ok ? 'var(--ink)' : 'var(--warn)';
     for (let k = 28; k >= d; k -= 2) s += '<line x1="' + (x - 11) + '" x2="' + (x + 11) + '" y1="' + yOf(k) + '" y2="' + yOf(k) + '" stroke="var(--muted)" stroke-width="1"/>';
     for (let k = 40; k <= d; k += 2) s += '<line x1="' + (x - 11) + '" x2="' + (x + 11) + '" y1="' + yOf(k) + '" y2="' + yOf(k) + '" stroke="var(--muted)" stroke-width="1"/>';
@@ -1041,7 +1059,7 @@ function staffSVG(notes, cur){
     if (d < 34) s += '<line x1="' + (x + 6) + '" x2="' + (x + 6) + '" y1="' + (y - 1) + '" y2="' + (y - 30) + '" stroke="' + col + '" stroke-width="1.4"/>';
     else s += '<line x1="' + (x - 6) + '" x2="' + (x - 6) + '" y1="' + (y + 1) + '" y2="' + (y + 30) + '" stroke="' + col + '" stroke-width="1.4"/>';
     if (SHARP[((o.midi % 12) + 12) % 12]) s += '<text x="' + (x - 16) + '" y="' + (y + 4) + '" font-size="12" fill="' + col + '">♯</text>';
-    s += '<text x="' + x + '" y="' + (bot + 12) + '" text-anchor="middle" font-size="11" font-weight="600" font-family="IBM Plex Mono, ui-monospace, monospace" fill="' + col + '">' + nn(o.midi) + '</text>';
+    s += '<text x="' + x + '" y="' + (bot + 12) + '" text-anchor="middle" font-size="11" font-weight="600" font-family="IBM Plex Mono, ui-monospace, monospace" fill="' + col + '">' + (sub ? '≈' + nn(sub.played) : nn(o.midi)) + '</text>';
     if (o.btn){
       const b = tokInfo(o.btn);
       const fill = {a:'var(--abtn)', c:'var(--cbtn)', sh:'var(--muted)', f:'var(--ink)'}[b.cls], ink = {a:'#fff', c:'var(--cbtn-ink)', sh:'var(--surface)', f:'var(--surface)'}[b.cls];
@@ -1057,7 +1075,7 @@ function renderSongView(){
   const sg = currentSong(); if (!sg){ ui.song.view = 'list'; return renderSongs(); }
   const notes = songNotes(sg);
   if (ui.song.step >= notes.length) ui.song.step = 0;
-  const cur = notes[ui.song.step], f = cur ? fingeringFor(cur.midi) : null;
+  const cur = notes[ui.song.step], bf = cur ? bestFingering(cur.midi) : null, f = bf ? bf.step : null;
   const go = i => { ui.songDone = false; ui.song.step = Math.max(0, Math.min(notes.length - 1, i)); renderSongView(); refreshStage(); };
   const staff = el('div', {class:'staffbox', html: staffSVG(notes, ui.song.step)});
   staff.addEventListener('click', e => { const i = e.target.getAttribute && e.target.getAttribute('data-i'); if (i != null){ stopPlay(); go(+i); playNote(notes[+i].midi, 0.6); } });
@@ -1067,7 +1085,8 @@ function renderSongView(){
     if (i >= notes.length){ ui.playing = null; renderSongView(); return; }
     ui.song.step = i; renderSongView(); refreshStage();
     const beat = 60 / ui.tempo;
-    playNote(notes[i].midi, beat * 0.9);
+    const pb = bestFingering(notes[i].midi);
+    playNote(pb ? pb.played : notes[i].midi, beat * 0.9);
     ui.playing = setTimeout(() => play(i + 1), beat * 1000);
   }
   const missing = [...new Set(notes.filter(o => !fingeringFor(o.midi)).map(o => o.midi))];
@@ -1081,7 +1100,8 @@ function renderSongView(){
     cur ? el('div', {class:'now'},
       el('div', {class:'bignote'}, nn(cur.midi)),
       el('div', {}, cur.btn ? el('div', {class:'row', style:'gap:6px'}, glyph(cur.btn), el('span', {class:'sub'}, tokInfo(cur.btn).name)) : null,
-        el('div', {class:'sub'}, f ? describe(f) : 'No fingering plays this note yet.'))
+        bf && !bf.exact ? el('div', {class:'pill warn', style:'display:inline-block;margin:4px 0'}, 'Not on your ocarina · play ' + nn(bf.played) + ' instead (' + diffText(bf.diff) + ')') : null,
+        el('div', {class:'sub'}, f ? describe(f) : 'No fingerings calibrated yet.'))
     ) : null,
     micPanel('song'),
     ui.songDone ? el('p', {class:'pill ok', style:'display:inline-block;margin:10px 0 0'}, 'Song complete. Press ‹ or tap the first note to go again.') : null,
@@ -1090,10 +1110,10 @@ function renderSongView(){
       ui.playing ? el('button', {type:'button', class:'btn primary', onclick: () => { stopPlay(); renderSongView(); }}, '■ Stop')
                  : el('button', {type:'button', class:'btn primary', onclick: () => { stopPlay(); play(ui.song.step >= notes.length - 1 ? 0 : ui.song.step); }}, '▶ Play along'),
       el('button', {type:'button', class:'icon', 'aria-label':'Next note', disabled: ui.song.step >= notes.length - 1, onclick: () => { stopPlay(); go(ui.song.step + 1); playNote(notes[ui.song.step].midi, 0.6); }}, '›'),
-      el('button', {type:'button', class:'btn', onclick: () => cur && playNote(cur.midi, 0.8)}, 'Hear note'),
+      el('button', {type:'button', class:'btn', onclick: () => cur && playNote(bf ? bf.played : cur.midi, 0.8)}, 'Hear note'),
       tempo
     ),
-    missing.length ? el('p', {class:'hint', style:'color:var(--warn)'}, 'Missing fingerings for ' + missing.map(nn).join(', ') + '. Change the key shift in the song list or add the notes in Calibrate.') : el('p', {class:'hint'}, 'Tap any note on the staff to jump there. Every note gets one beat; follow the rhythm you know from the game.')
+    missing.length ? el('p', {class:'hint', style:'color:var(--warn)'}, missing.map(nn).join(', ') + (missing.length > 1 ? ' are' : ' is') + ' not on your ocarina, so the closest fingering is shown (marked ≈ on the staff). Auto-fit in the song list can move the whole song to fit.') : el('p', {class:'hint'}, 'Tap any note on the staff to jump there. Every note gets one beat; follow the rhythm you know from the game.')
   );
 }
 function renderSongEdit(){
