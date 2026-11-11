@@ -245,6 +245,7 @@ input[type=text]{width:100%;border:1px solid var(--line);background:var(--surfac
 (function(){
 'use strict';
 const $ = s => document.querySelector(s);
+function put(p, ...kids){ p.append(...kids.filter(k => k != null && k !== false)); }
 function el(tag, attrs, ...kids){
   const e = document.createElement(tag);
   attrs = attrs || {};
@@ -271,11 +272,11 @@ const dia = m => (Math.floor(m / 12) - 1) * 7 + LETTER[((m % 12) + 12) % 12];
 
 /* Game ocarina buttons and the pitch each one plays in the game */
 const BTN = {
-  A:{midi:62, glyph:'A', cls:'a', name:'A'},
-  D:{midi:65, glyph:'▼', cls:'c', name:'C-down'},
-  R:{midi:69, glyph:'▶', cls:'c', name:'C-right'},
-  L:{midi:71, glyph:'◀', cls:'c', name:'C-left'},
-  U:{midi:74, glyph:'▲', cls:'c', name:'C-up'}
+  A:{midi:74, glyph:'A', cls:'a', name:'A'},
+  D:{midi:77, glyph:'▼', cls:'c', name:'C-down'},
+  R:{midi:81, glyph:'▶', cls:'c', name:'C-right'},
+  L:{midi:83, glyph:'◀', cls:'c', name:'C-left'},
+  U:{midi:86, glyph:'▲', cls:'c', name:'C-up'}
 };
 /* Newer controller layout (L R A X Y). Each button resolves to one of the five game pitches above; editable in Songs. */
 const NEWBTN = {sL:{label:'L', cls:'sh'}, sR:{label:'R', cls:'sh'}, sA:{label:'A', cls:'f'}, sX:{label:'X', cls:'f'}, sY:{label:'Y', cls:'f'}};
@@ -473,14 +474,14 @@ function micPanel(kind){
     el('div', {class:'needle', 'aria-hidden':'true'}, el('i', {'data-mic-needle':''}))
   );
   if (kind === 'calibrate'){
-    box.append(
+    put(box, 
       el('label', {class:'auto'}, el('input', {type:'checkbox', id:'autocap', checked: !!ui.autoCap, onchange: e => { ui.autoCap = e.target.checked; }}), 'Save automatically and go to the next fingering once a note is steady for a second'),
       el('button', {type:'button', id:'micUse', class:'btn', disabled:true, onclick: () => captureHeard(false)}, 'Save heard note')
     );
   } else {
-    box.append(el('label', {class:'auto'}, el('input', {type:'checkbox', id:'listensong', checked: !!ui.listenSong, onchange: e => { ui.listenSong = e.target.checked; if (e.target.checked && !Mic.on) micToggle(); }}), 'Move to the next note when I play the right one'));
+    put(box, el('label', {class:'auto'}, el('input', {type:'checkbox', id:'listensong', checked: !!ui.listenSong, onchange: e => { ui.listenSong = e.target.checked; if (e.target.checked && !Mic.on) micToggle(); }}), 'Move to the next note when I play the right one'));
   }
-  if (Mic.err) box.append(el('p', {class:'hint', style:'color:var(--warn)'}, Mic.err));
+  if (Mic.err) put(box, el('p', {class:'hint', style:'color:var(--warn)'}, Mic.err));
   return box;
 }
 
@@ -692,15 +693,14 @@ function describe(step){
   if (open.length === state.holes.length) return 'All holes open';
   return 'Open: ' + open.join(', ');
 }
-function fingeringFor(m){
-  const c = state.steps.filter(s => s.note === m);
-  return c.find(s => s.confirmed) || c[0] || null;
-}
+/* Once anything is calibrated, only checked fingerings count; unchecked defaults are guesses. */
+function usableSteps(){ const c = state.steps.filter(s => s.note != null && s.confirmed); return c.length ? c : state.steps.filter(s => s.note != null); }
+function fingeringFor(m){ return usableSteps().find(s => s.note === m) || null; }
 /* Exact fingering if there is one; otherwise the same note in another octave, otherwise the nearest pitch. */
 function bestFingering(m){
   const exact = fingeringFor(m);
   if (exact) return {step: exact, played: m, exact: true, diff: 0};
-  const have = [...new Set(state.steps.filter(s => s.note != null).map(s => s.note))];
+  const have = [...new Set(usableSteps().map(s => s.note))];
   if (!have.length) return null;
   const oct = have.filter(n => (n - m) % 12 === 0).sort((a, b) => Math.abs(a - m) - Math.abs(b - m) || a - b)[0];
   const near = have.slice().sort((a, b) => Math.abs(a - m) - Math.abs(b - m) || b - a)[0];
@@ -800,7 +800,7 @@ function renderCalibrate(){
 
   const confirmRemove = ui.confirm === 'remove-step';
 
-  p.append(
+  put(p, 
     el('p', {class:'lede'}, 'Cover the gold holes and blow gently and steadily. With the microphone on, the coach hears the note and saves it for you. You can also pick the note by hand below.'),
     el('div', {class:'progress'}, el('div', {class:'bar'}, el('i', {style:'width:' + (done / steps.length * 100) + '%'})), el('span', {}, done + ' of ' + steps.length + ' confirmed')),
     el('div', {class:'stepnav'},
@@ -867,8 +867,8 @@ function renderChart(){
   const p = $('#panel-chart'); p.replaceChildren();
   const list = state.steps.map((s, i) => ({s, i})).filter(o => o.s.note != null).sort((a, b) => a.s.note - b.s.note || a.i - b.i);
   const confirmed = list.filter(o => o.s.confirmed).length;
-  p.append(el('p', {class:'lede'}, confirmed === list.length ? 'Every note your ocarina plays, lowest to highest. Tap one to see it on the model and hear it.' : 'Lowest to highest. Notes with a faded dot are still the standard guess for this layout; confirm them in Calibrate.'));
-  if (!list.length){ p.append(el('div', {class:'empty'}, 'No notes yet. Pick a note for each fingering in Calibrate and they appear here.')); return; }
+  put(p, el('p', {class:'lede'}, confirmed === list.length ? 'Every note your ocarina plays, lowest to highest. Tap one to see it on the model and hear it.' : 'Lowest to highest. Notes with a faded dot are still the standard guess for this layout; confirm them in Calibrate.'));
+  if (!list.length){ put(p, el('div', {class:'empty'}, 'No notes yet. Pick a note for each fingering in Calibrate and they appear here.')); return; }
   const g = el('div', {class:'chart'});
   for (const {s} of list){
     const b = el('button', {type:'button', class:'card', 'aria-pressed': String(ui.chartSel === s.id), onclick: () => { ui.chartSel = s.id; playNote(s.note, 0.8); renderChart(); refreshStage(); }},
@@ -876,9 +876,9 @@ function renderChart(){
       el('div', {html: miniSVG(s.closed)}),
       el('span', {class:'cents'}, s.confirmed ? centsLabel(s.cents) : 'expected')
     );
-    g.append(b);
+    put(g, b);
   }
-  p.append(g);
+  put(p, g);
 }
 
 /* ---------- Songs ---------- */
@@ -897,8 +897,8 @@ function layoutTokens(){ return state.ctrl === 'n64' ? PITCH_KEYS.slice() : ['sL
 function glyph(t){ const d = tokInfo(t); return el('span', {class:'g ' + d.cls, 'aria-label': d.name}, d.glyph); }
 function stopPlay(){ if (ui.playing){ clearTimeout(ui.playing); ui.playing = null; } }
 function autoFit(){
-  const base = [62,65,69,71,74];
-  const have = new Set(state.steps.filter(s => s.note != null).map(s => s.note));
+  const base = Object.keys(BTN).map(k => BTN[k].midi);
+  const have = new Set(usableSteps().map(s => s.note));
   let best = 0, score = -1;
   for (let sh = -24; sh <= 24; sh++){
     const sc = base.filter(m => have.has(m + sh)).length;
@@ -955,7 +955,7 @@ function parsePaste(text){
 }
 function controllerBox(){
   const box = el('div', {class:'keyrow', style:'flex-direction:column;align-items:stretch'});
-  box.append(el('div', {class:'row', style:'justify-content:space-between'},
+  put(box, el('div', {class:'row', style:'justify-content:space-between'},
     el('span', {class:'lbl'}, 'Game buttons'),
     el('div', {class:'seg'},
       el('button', {type:'button', 'aria-pressed': String(state.ctrl !== 'n64'), onclick: () => { state.ctrl = 'lrxya'; commit(); renderSongs(); }}, 'L R A X Y'),
@@ -967,14 +967,14 @@ function controllerBox(){
       PITCH_KEYS.forEach(k => sel.append(el('option', {value:k, selected: state.ctrlMap[t] === k}, nn(BTN[k].midi))));
       grid.append(el('label', {}, glyph(t), sel));
     }
-    box.append(grid, el('p', {class:'hint', style:'margin:4px 0 0'}, 'Which in-game note each button plays. If one sounds different in your game, change it here; unlocked songs follow.'));
+    put(box, grid, el('p', {class:'hint', style:'margin:4px 0 0'}, 'Which in-game note each button plays. If one sounds different in your game, change it here; unlocked songs follow.'));
   }
   return box;
 }
 function pasteBox(){
   const wrap = el('div', {style:'margin:12px 0'});
   if (!ui.pasteOpen){
-    wrap.append(el('button', {type:'button', class:'btn primary', onclick: () => { ui.pasteOpen = true; renderSongs(); const t = document.getElementById('pastebox'); if (t) t.focus(); }}, 'Unlock songs from a list'));
+    put(wrap, el('button', {type:'button', class:'btn primary', onclick: () => { ui.pasteOpen = true; renderSongs(); const t = document.getElementById('pastebox'); if (t) t.focus(); }}, 'Unlock songs from a list'));
     return wrap;
   }
   const res = parsePaste(ui.pasteText);
@@ -986,7 +986,7 @@ function pasteBox(){
   const ta = el('textarea', {id:'pastebox', placeholder:'Paste or type one song per line, for example:\nSong name: L R A …\n\nAny notation works: L R A X Y, arrows (▲ ▼ ◀ ▶ ^ v < >), C-up / C-down, A.', 'aria-label':'Button sequences'});
   ta.value = ui.pasteText || '';
   ta.addEventListener('input', () => { ui.pasteText = ta.value; const pos = ta.selectionStart; renderSongs(); const n = document.getElementById('pastebox'); if (n){ n.focus(); n.setSelectionRange(pos, pos); } });
-  wrap.append(
+  put(wrap, 
     el('p', {class:'hint', style:'margin:0 0 8px'}, 'Copy the button sequences from your game’s song list or any guide and paste them here. Song names are recognised automatically.'),
     ta,
     res.songs.length ? prev : null,
@@ -1009,7 +1009,7 @@ function renderSongs(){
   const p = $('#panel-songs'); p.replaceChildren();
   const base = layoutTokens().map(t => ({b:t, m: tokMidi(t)}));
   const missing = base.filter(o => !fingeringFor(o.m));
-  p.append(
+  put(p, 
     el('p', {class:'lede'}, 'Each game button becomes a note, and each note a fingering on your ocarina. Unlock songs from a pasted list, or tap a song to enter its buttons.'),
     pasteBox(),
     ui.pasteMsg ? el('p', {class:'pill ok', style:'display:inline-block;margin:0 0 10px'}, ui.pasteMsg) : null,
@@ -1021,20 +1021,20 @@ function renderSongs(){
   const groups = {};
   for (const sg of allSongs()) (groups[sg.group] = groups[sg.group] || []).push(sg);
   for (const gname of Object.keys(groups)){
-    p.append(el('h3', {}, gname));
+    put(p, el('h3', {}, gname));
     const list = el('div', {class:'songlist'});
     for (const sg of groups[gname]){
       const open = isUnlocked(sg), n = songNotes(sg);
       const miss = n.filter(x => !fingeringFor(x.midi)).length;
-      list.append(el('button', {type:'button', class:'songrow ' + (open ? 'open' : 'locked'), onclick: () => { stopPlay(); ui.song = {view: open ? 'song' : 'edit', id: sg.id, step:0, buf: open ? songSeq(sg) : [], name: sg.name}; renderSongs(); refreshStage(); }},
+      put(list, el('button', {type:'button', class:'songrow ' + (open ? 'open' : 'locked'), onclick: () => { stopPlay(); ui.song = {view: open ? 'song' : 'edit', id: sg.id, step:0, buf: open ? songSeq(sg) : [], name: sg.name}; renderSongs(); refreshStage(); }},
         el('span', {class:'lock', 'aria-hidden':'true'}, open ? '♪' : '🔒'),
         el('span', {class:'nm'}, sg.name),
         el('span', {class:'st'}, open ? (n.length + ' notes' + (miss ? ' · ' + miss + ' missing' : '')) : 'Locked')
       ));
     }
-    p.append(list);
+    put(p, list);
   }
-  p.append(el('div', {style:'margin-top:14px'}, el('button', {type:'button', class:'btn', onclick: () => { ui.song = {view:'edit', id:null, step:0, buf:[], name:'', custom:true}; renderSongs(); }}, 'Add a song of your own')));
+  put(p, el('div', {style:'margin-top:14px'}, el('button', {type:'button', class:'btn', onclick: () => { ui.song = {view:'edit', id:null, step:0, buf:[], name:'', custom:true}; renderSongs(); }}, 'Add a song of your own')));
 }
 function songSeq(sg){ if (sg.custom) return (sg.notes || []).slice(); const r = state.songs[sg.id]; return r && r.seq ? r.seq.slice() : []; }
 function staffSVG(notes, cur){
@@ -1090,7 +1090,7 @@ function renderSongView(){
     ui.playing = setTimeout(() => play(i + 1), beat * 1000);
   }
   const missing = [...new Set(notes.filter(o => !fingeringFor(o.midi)).map(o => o.midi))];
-  p.append(
+  put(p, 
     el('div', {class:'row', style:'justify-content:space-between'},
       el('button', {type:'button', class:'btn ghost', onclick: () => { stopPlay(); ui.song.view = 'list'; renderSongs(); refreshStage(); }}, '‹ All songs'),
       el('button', {type:'button', class:'btn ghost', onclick: () => { stopPlay(); ui.song.view = 'edit'; ui.song.buf = songSeq(sg); ui.song.name = sg.name; ui.song.custom = !!sg.custom; renderSongs(); }}, sg.custom ? 'Edit song' : 'Edit buttons')
@@ -1156,7 +1156,7 @@ function renderSongEdit(){
     commit(); ui.song.view = 'song'; ui.song.step = 0; renderSongs(); refreshStage();
   };
   const removeLabel = custom ? 'Delete song' : 'Lock again';
-  p.append(
+  put(p, 
     el('button', {type:'button', class:'btn ghost', onclick: () => { ui.song.view = sg && isUnlocked(sg) ? 'song' : 'list'; ui.confirm = null; renderSongs(); refreshStage(); }}, '‹ Back'),
     el('h2', {style:'margin-top:6px'}, sg ? sg.name : 'New song'),
     el('p', {class:'lede', style:'margin-top:6px'}, custom ? 'Build a tune from the notes your ocarina plays.' : 'Enter the buttons in the order the game showed them when you learned this song.'),
@@ -1182,15 +1182,15 @@ function syncBanner(){
 $('#bannerCancel').addEventListener('click', () => { ui.placing = null; syncBanner(); renderHoles(); });
 function renderHoles(){
   const p = $('#panel-holes'); p.replaceChildren();
-  p.append(el('p', {class:'lede'}, 'Start from the layout that matches your print, then move any hole that sits somewhere else on yours. Finger names follow the usual 12-hole grip.'));
+  put(p, el('p', {class:'lede'}, 'Start from the layout that matches your print, then move any hole that sits somewhere else on yours. Finger names follow the usual 12-hole grip.'));
   const seg = el('div', {class:'seg'},
     el('button', {type:'button', 'aria-pressed': String(state.preset === '12'), onclick: () => { if (state.preset !== '12'){ ui.confirm = 'preset-12'; renderHoles(); } }}, '12-hole'),
     el('button', {type:'button', 'aria-pressed': String(state.preset === '10'), onclick: () => { if (state.preset !== '10'){ ui.confirm = 'preset-10'; renderHoles(); } }}, '10-hole')
   );
-  p.append(el('div', {class:'row', style:'justify-content:space-between;margin-bottom:10px'}, el('span', {class:'eyebrow'}, 'Starting layout'), seg));
+  put(p, el('div', {class:'row', style:'justify-content:space-between;margin-bottom:10px'}, el('span', {class:'eyebrow'}, 'Starting layout'), seg));
   if (ui.confirm && ui.confirm.startsWith('preset-')){
     const k = ui.confirm.split('-')[1];
-    p.append(el('div', {class:'confirmbox', style:'margin-bottom:10px'}, el('span', {}, 'Switch to the ' + k + '-hole layout? This resets your holes and calibration. Unlocked songs stay.'),
+    put(p, el('div', {class:'confirmbox', style:'margin-bottom:10px'}, el('span', {}, 'Switch to the ' + k + '-hole layout? This resets your holes and calibration. Unlocked songs stay.'),
       el('button', {type:'button', class:'btn', onclick: () => { ui.confirm = null; renderHoles(); }}, 'Cancel'),
       el('button', {type:'button', class:'btn primary', onclick: () => { const f = preset(k); state.preset = k; state.holes = f.holes; state.steps = f.steps; ui.step = 0; ui.holeSel = null; ui.confirm = null; commit(); stageRebuild(); renderHoles(); }}, 'Switch')));
   }
@@ -1204,30 +1204,30 @@ function renderHoles(){
       el('button', {type:'button', class:'btn', style:'padding:5px 10px', onclick: e => { e.stopPropagation(); ui.holeSel = h.id; ui.placing = h.id; syncBanner(); renderHoles(); refreshStage(); }}, ui.placing === h.id ? 'Tap model…' : 'Move'),
       el('button', {type:'button', class:'btn ghost danger', style:'padding:5px 8px', 'aria-label':'Remove ' + h.label, onclick: e => { e.stopPropagation(); ui.confirm = 'hole-' + h.id; renderHoles(); }}, '✕')
     );
-    list.append(row);
+    put(list, row);
     if (ui.confirm === 'hole-' + h.id){
-      list.append(el('div', {class:'confirmbox'}, el('span', {}, 'Remove ' + h.label + ' from the model and every fingering?'),
+      put(list, el('div', {class:'confirmbox'}, el('span', {}, 'Remove ' + h.label + ' from the model and every fingering?'),
         el('button', {type:'button', class:'btn', onclick: () => { ui.confirm = null; renderHoles(); }}, 'Keep'),
         el('button', {type:'button', class:'btn primary', onclick: () => { state.holes = state.holes.filter(x => x.id !== h.id); state.steps.forEach(s => { s.closed = s.closed.filter(x => x !== h.id); }); if (ui.holeSel === h.id) ui.holeSel = null; ui.confirm = null; commit(); stageRebuild(); renderHoles(); }}, 'Remove')));
     }
   }
-  p.append(list);
+  put(p, list);
   // add a hole
   const nameIn = el('input', {type:'text', id:'newhole', placeholder:'Label, e.g. extra', 'aria-label':'New hole label', style:'flex:1;min-width:10ch'});
-  p.append(el('h3', {}, 'Add a hole'), el('div', {class:'row'}, nameIn, el('button', {type:'button', class:'btn', onclick: () => {
+  put(p, el('h3', {}, 'Add a hole'), el('div', {class:'row'}, nameIn, el('button', {type:'button', class:'btn', onclick: () => {
     const label = nameIn.value.trim().slice(0, 8) || ('H' + (state.holes.length + 1));
     const id = 'h' + Date.now().toString(36);
     state.holes.push({id, label, finger:'Unassigned', x:0, z:0, side:'top', r:0.08});
     ui.holeSel = id; ui.placing = id; commit(); stageRebuild(); syncBanner(); renderHoles();
   }}, 'Add and place')));
-  p.append(el('p', {class:'hint'}, 'New holes start open in every fingering. Cover them where needed in Calibrate.'));
+  put(p, el('p', {class:'hint'}, 'New holes start open in every fingering. Cover them where needed in Calibrate.'));
   const file = el('input', {type:'file', id:'importfile', accept:'application/json,.json', hidden:true, onchange: e => {
     const f = e.target.files && e.target.files[0]; if (!f) return;
     const rd = new FileReader();
     rd.onload = () => { try { const d = JSON.parse(rd.result); if (!d || !Array.isArray(d.holes) || !Array.isArray(d.steps)) throw 0; state = normalize(d); commit(); clampUi(); ui.backupMsg = 'Backup loaded.'; stageRebuild(); renderHoles(); } catch(err){ ui.backupMsg = 'That file is not an Ocarina Coach backup.'; renderHoles(); } };
     rd.readAsText(f);
   }});
-  p.append(el('h3', {}, 'Backup'),
+  put(p, el('h3', {}, 'Backup'),
     el('p', {class:'hint', style:'margin:0 0 8px'}, 'Your setup is saved in this browser only. Save a backup file to move it to another device or browser.'),
     el('div', {class:'row'},
       el('button', {type:'button', class:'btn', onclick: () => {
