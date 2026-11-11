@@ -885,7 +885,7 @@ function renderChart(){
 function allSongs(){ return SONGS.concat(state.custom.map(c => Object.assign({custom:true, group:'Your songs'}, c))); }
 function currentSong(){ return allSongs().find(s => s.id === ui.song.id) || null; }
 function songNotes(sg){
-  if (sg.custom) return (sg.notes || []).map(m => ({midi:m}));
+  if (sg.custom) return (sg.notes || []).map((m, i) => ({midi:m, dur: sg.durs && sg.durs[i] ? sg.durs[i] : 1}));
   const rec = state.songs[sg.id];
   return (rec && rec.seq ? rec.seq : []).filter(t => canon(t)).map(t => ({midi: tokMidi(t), btn:t}));
 }
@@ -1026,7 +1026,7 @@ function renderSongs(){
     for (const sg of groups[gname]){
       const open = isUnlocked(sg), n = songNotes(sg);
       const miss = n.filter(x => !fingeringFor(x.midi)).length;
-      put(list, el('button', {type:'button', class:'songrow ' + (open ? 'open' : 'locked'), onclick: () => { stopPlay(); ui.song = {view: open ? 'song' : 'edit', id: sg.id, step:0, buf: open ? songSeq(sg) : [], name: sg.name}; renderSongs(); refreshStage(); }},
+      put(list, el('button', {type:'button', class:'songrow ' + (open ? 'open' : 'locked'), onclick: () => { stopPlay(); if (sg.bpm) ui.tempo = sg.bpm; ui.song = {view: open ? 'song' : 'edit', id: sg.id, step:0, buf: open ? songSeq(sg) : [], name: sg.name}; renderSongs(); refreshStage(); }},
         el('span', {class:'lock', 'aria-hidden':'true'}, open ? '♪' : '🔒'),
         el('span', {class:'nm'}, sg.name),
         el('span', {class:'st'}, open ? (n.length + ' notes' + (miss ? ' · ' + miss + ' missing' : '')) : 'Locked')
@@ -1034,7 +1034,7 @@ function renderSongs(){
     }
     put(p, list);
   }
-  put(p, el('div', {style:'margin-top:14px'}, el('button', {type:'button', class:'btn', onclick: () => { ui.song = {view:'edit', id:null, step:0, buf:[], name:'', custom:true}; renderSongs(); }}, 'Add a song of your own')));
+  put(p, el('div', {style:'margin-top:14px'}, el('button', {type:'button', class:'btn', onclick: () => { ui.song = {view:'edit', id:null, step:0, buf:[], name:'', custom:true, durs:undefined}; renderSongs(); }}, 'Add a full song (notes or MIDI file)')));
 }
 function songSeq(sg){ if (sg.custom) return (sg.notes || []).slice(); const r = state.songs[sg.id]; return r && r.seq ? r.seq.slice() : []; }
 function staffSVG(notes, cur){
@@ -1080,16 +1080,18 @@ function renderSongView(){
   const staff = el('div', {class:'staffbox', html: staffSVG(notes, ui.song.step)});
   staff.addEventListener('click', e => { const i = e.target.getAttribute && e.target.getAttribute('data-i'); if (i != null){ stopPlay(); go(+i); playNote(notes[+i].midi, 0.6); } });
   const tempo = el('select', {id:'tempo', 'aria-label':'Tempo', onchange: e => { ui.tempo = +e.target.value; }});
-  [60, 75, 90, 110, 130].forEach(t => tempo.append(el('option', {value:String(t), selected: ui.tempo === t}, t + ' bpm')));
+  [...new Set([60, 75, 90, 110, 130, 160].concat(sg.bpm ? [sg.bpm] : [], [ui.tempo]))].sort((a, b) => a - b).forEach(t => tempo.append(el('option', {value:String(t), selected: ui.tempo === t}, t + ' bpm')));
   function play(i){
     if (i >= notes.length){ ui.playing = null; renderSongView(); return; }
     ui.song.step = i; renderSongView(); refreshStage();
     const beat = 60 / ui.tempo;
     const pb = bestFingering(notes[i].midi);
-    playNote(pb ? pb.played : notes[i].midi, beat * 0.9);
-    ui.playing = setTimeout(() => play(i + 1), beat * 1000);
+    const len = beat * (notes[i].dur || 1);
+    playNote(pb ? pb.played : notes[i].midi, Math.max(0.12, len * 0.9));
+    ui.playing = setTimeout(() => play(i + 1), len * 1000);
   }
   const missing = [...new Set(notes.filter(o => !fingeringFor(o.midi)).map(o => o.midi))];
+  requestAnimationFrame(() => { const x = 18 + ui.song.step * 44; if (staff.scrollWidth > staff.clientWidth) staff.scrollLeft = Math.max(0, x - staff.clientWidth / 2 + 22); });
   put(p, 
     el('div', {class:'row', style:'justify-content:space-between'},
       el('button', {type:'button', class:'btn ghost', onclick: () => { stopPlay(); ui.song.view = 'list'; renderSongs(); refreshStage(); }}, '‹ All songs'),
@@ -1113,17 +1115,142 @@ function renderSongView(){
       el('button', {type:'button', class:'btn', onclick: () => cur && playNote(bf ? bf.played : cur.midi, 0.8)}, 'Hear note'),
       tempo
     ),
-    missing.length ? el('p', {class:'hint', style:'color:var(--warn)'}, missing.map(nn).join(', ') + (missing.length > 1 ? ' are' : ' is') + ' not on your ocarina, so the closest fingering is shown (marked ≈ on the staff). Auto-fit in the song list can move the whole song to fit.') : el('p', {class:'hint'}, 'Tap any note on the staff to jump there. Every note gets one beat; follow the rhythm you know from the game.')
+    missing.length ? el('p', {class:'hint', style:'color:var(--warn)'}, missing.map(nn).join(', ') + (missing.length > 1 ? ' are' : ' is') + ' not on your ocarina, so the closest fingering is shown (marked ≈ on the staff). Auto-fit in the song list can move the whole song to fit.') : el('p', {class:'hint'}, notes.some(o => o.dur && o.dur !== 1) ? 'Tap any note on the staff to jump there. Play-along follows the rhythm from the imported file.' : 'Tap any note on the staff to jump there. Every note gets one beat; follow the rhythm you know from the game.')
   );
+}
+/* Note names: C5 C#5 Db5 B♭4 F♯5; a name without octave reuses the last octave; "-" or "_" holds the previous note one more beat. */
+function parseNoteNames(text){
+  const notes = [], durs = []; let oct = 5;
+  const BASE = {c:0, d:2, e:4, f:5, g:7, a:9, b:11, h:11};
+  const words = String(text || '').replace(/♯/g, '#').replace(/♭/g, 'b').split(/[\s,;|\/]+/).filter(Boolean);
+  for (const w of words){
+    if (/^[-_–—]+$/.test(w)){ if (durs.length) durs[durs.length - 1] += w.length; continue; }
+    const m = /^([A-Ha-h])(#{1,2}|b{1,2}|s)?(-?\d)?('*)$/.exec(w.replace(/[().\[\]]/g, ''));
+    if (!m) continue;
+    const L = m[1].toLowerCase();
+    let acc = 0; if (m[2]) acc = (m[2][0] === '#' || m[2] === 's') ? m[2].length : -m[2].length;
+    if (m[3] != null && m[3] !== '') oct = parseInt(m[3], 10);
+    let midi = (oct + 1) * 12 + BASE[L] + acc;
+    if (m[4]) midi += 12 * m[4].length;
+    notes.push(midi); durs.push(1);
+  }
+  return {notes, durs};
+}
+function parseMidi(ab){
+  const d = new DataView(ab); let p = 0;
+  const str = n => { let r = ''; for (let i = 0; i < n; i++) r += String.fromCharCode(d.getUint8(p + i)); p += n; return r; };
+  const u32 = () => { const v = d.getUint32(p); p += 4; return v; }, u16 = () => { const v = d.getUint16(p); p += 2; return v; };
+  if (str(4) !== 'MThd') throw new Error('not a MIDI file');
+  const hl = u32(); u16(); const ntr = u16(), div = u16(); p += hl - 6;
+  if (div & 0x8000) throw new Error('this MIDI uses SMPTE timing, which is not supported');
+  let tempo = 0; const parts = {};
+  for (let t = 0; t < ntr && p <= d.byteLength - 8; t++){
+    const id = str(4), len = u32(), end = Math.min(p + len, d.byteLength);
+    if (id !== 'MTrk'){ p = end; continue; }
+    let tick = 0, run = 0, name = '';
+    const open = {};
+    const vlq = () => { let v = 0, b; do { b = d.getUint8(p++); v = (v * 128) + (b & 0x7f); } while ((b & 0x80) && p < end); return v; };
+    while (p < end){
+      tick += vlq();
+      if (p >= end) break;
+      let st = d.getUint8(p);
+      if (st & 0x80) p++; else st = run;
+      if (st === 0xff){ const ty = d.getUint8(p++), l = vlq();
+        if (ty === 0x51 && !tempo && l >= 3) tempo = (d.getUint8(p) << 16) | (d.getUint8(p + 1) << 8) | d.getUint8(p + 2);
+        if (ty === 0x03 && !name){ let s2 = ''; for (let i = 0; i < l; i++) s2 += String.fromCharCode(d.getUint8(p + i)); name = s2.trim(); }
+        p += l; continue; }
+      if (st === 0xf0 || st === 0xf7){ p += vlq(); continue; }
+      if (!(st & 0x80)) break;
+      run = st; const hi = st & 0xf0, ch = st & 0x0f;
+      const a = d.getUint8(p++), b = (hi === 0xc0 || hi === 0xd0) ? 0 : d.getUint8(p++);
+      if (ch === 9) continue;
+      const key = t + ':' + ch, nk = ch + ':' + a;
+      if (hi === 0x90 && b > 0){ (open[nk] = open[nk] || []).push(tick); }
+      else if (hi === 0x80 || (hi === 0x90 && b === 0)){
+        const q = open[nk];
+        if (q && q.length){ const t0 = q.shift(); (parts[key] = parts[key] || {name:'', notes: []}).notes.push({t: t0, e: tick, m: a}); }
+      }
+    }
+    for (const k in parts) if (k.startsWith(t + ':') && !parts[k].name) parts[k].name = name;
+    p = end;
+  }
+  const list = Object.values(parts).filter(x => x.notes.length).map((x, i) => ({label: (x.name || 'Part ' + (i + 1)) + ' · ' + x.notes.length + ' notes', name: x.name || 'Part ' + (i + 1), notes: x.notes}));
+  list.sort((a, b) => b.notes.length - a.notes.length);
+  return {ppq: div, bpm: tempo ? Math.round(60000000 / tempo) : 120, parts: list};
+}
+function melodyFrom(part, ppq){
+  const ns = part.notes.slice().sort((a, b) => a.t - b.t || b.m - a.m);
+  const tol = ppq / 24, on = [];
+  for (const n of ns){ const last = on[on.length - 1]; if (last && n.t - last.t <= tol){ if (n.m > last.m) Object.assign(last, n); } else on.push(Object.assign({}, n)); }
+  const q = v => Math.max(0.25, Math.round(v * 4) / 4);
+  const notes = [], durs = [];
+  on.slice(0, 600).forEach((n, i, a) => { notes.push(n.m); durs.push(q(((a[i + 1] ? a[i + 1].t : n.e) - n.t) / ppq)); });
+  return {notes, durs};
+}
+function bestOctave(notes){
+  const have = new Set(usableSteps().map(s => s.note));
+  let best = 0, score = -1;
+  for (const k of [0, 12, -12, 24, -24, 36, -36]){ const sc = notes.filter(m => have.has(m + k)).length; if (sc > score){ score = sc; best = k; } }
+  return best;
+}
+function loadImported(res, msg){
+  const k = res.notes.length ? bestOctave(res.notes) : 0;
+  ui.song.buf.length = 0; res.notes.forEach(m => ui.song.buf.push(m + k));
+  ui.song.durs = res.durs.slice();
+  const have = new Set(usableSteps().map(s => s.note)), hit = ui.song.buf.filter(m => have.has(m)).length;
+  ui.importMsg = res.notes.length ? msg + ' · ' + res.notes.length + ' notes' + (k ? ', moved ' + diffText(k) + ' to fit your ocarina' : '') + ' · ' + hit + ' of ' + res.notes.length + ' playable exactly' : 'No notes found. Use note names like D5 F5 A5.';
+  renderSongEdit();
+}
+function importBox(){
+  const box = el('div', {class:'mic', style:'background:var(--surface-2)'});
+  const ta = el('textarea', {id:'notepaste', style:'min-height:90px', placeholder:'Paste note names, e.g.  D5 F5 D6 - C6 …\nSharps/flats: C#5, Bb4. A dash holds the note one beat longer.', 'aria-label':'Notes to import'});
+  ta.value = ui.notePaste || ''; ta.addEventListener('input', () => { ui.notePaste = ta.value; });
+  const file = el('input', {type:'file', id:'midifile', accept:'.mid,.midi,audio/midi,audio/x-midi', hidden:true, onchange: e => {
+    const f = e.target.files && e.target.files[0]; if (!f) return;
+    const rd = new FileReader();
+    rd.onload = () => {
+      try {
+        const mid = parseMidi(rd.result);
+        if (!mid.parts.length) throw new Error('no notes in this file');
+        ui.midi = mid; ui.midiPart = 0; ui.song.bpm = mid.bpm;
+        if (!(ui.song.name || '').trim()) ui.song.name = f.name.replace(/\.midi?$/i, '');
+        loadImported(melodyFrom(mid.parts[0], mid.ppq), 'Loaded ' + mid.parts[0].name);
+      } catch(err){ ui.importMsg = 'Could not read that file: ' + (err && err.message || err); ui.midi = null; renderSongEdit(); }
+    };
+    rd.readAsArrayBuffer(f); e.target.value = '';
+  }});
+  let partPicker = null;
+  if (ui.midi && ui.midi.parts.length > 1){
+    const sel = el('select', {id:'midipart', 'aria-label':'MIDI part', style:'flex:1;min-width:0;border:1px solid var(--line);background:var(--surface);color:var(--ink);border-radius:8px;padding:5px;font:inherit;font-size:.85rem', onchange: e => { ui.midiPart = +e.target.value; const pt = ui.midi.parts[ui.midiPart]; loadImported(melodyFrom(pt, ui.midi.ppq), 'Loaded ' + pt.name); }});
+    ui.midi.parts.forEach((pt, i) => sel.append(el('option', {value:String(i), selected: i === ui.midiPart}, pt.label)));
+    partPicker = el('div', {class:'row'}, el('span', {class:'hint', style:'margin:0'}, 'Melody part'), sel);
+  }
+  const shiftAll = k => { for (let i = 0; i < ui.song.buf.length; i++) ui.song.buf[i] += k; renderSongEdit(); };
+  put(box,
+    el('span', {class:'eyebrow'}, 'Import a full melody'),
+    ta,
+    el('div', {class:'row'},
+      el('button', {type:'button', class:'btn', onclick: () => { ui.midi = null; ui.song.bpm = null; loadImported(parseNoteNames(ui.notePaste), 'Pasted'); }}, 'Use pasted notes'),
+      el('button', {type:'button', class:'btn', onclick: () => file.click()}, 'Load MIDI file'), file),
+    partPicker,
+    ui.importMsg ? el('p', {class:'hint', style:'margin:0'}, ui.importMsg) : null,
+    ui.song.buf.length ? el('div', {class:'row'},
+      el('span', {class:'hint', style:'margin:0'}, 'Whole song:'),
+      el('button', {type:'button', class:'btn', onclick: () => shiftAll(-12)}, 'Octave down'),
+      el('button', {type:'button', class:'btn', onclick: () => shiftAll(12)}, 'Octave up'),
+      el('button', {type:'button', class:'btn', onclick: () => shiftAll(bestOctave(ui.song.buf))}, 'Fit')) : null
+  );
+  return box;
 }
 function renderSongEdit(){
   const p = $('#panel-songs'); p.replaceChildren();
   const sg = currentSong(); const custom = sg ? !!sg.custom : !!ui.song.custom;
   const buf = ui.song.buf;
-  const seq = el('div', {class:'seq', 'aria-live':'polite'});
+  if (custom && ui.song.durs === undefined){ ui.song.durs = sg && sg.durs ? sg.durs.slice() : null; ui.song.bpm = sg ? sg.bpm || null : null; ui.importMsg = ''; ui.midi = null; }
+  const seq = el('div', {class:'seq', 'aria-live':'polite', style: buf.length > 60 ? 'max-height:180px;overflow-y:auto' : ''});
   if (!buf.length) seq.append(el('span', {class:'ph'}, custom ? 'Tap notes below to add them' : 'Tap the buttons in order'));
   buf.forEach(x => seq.append(custom ? el('span', {class:'nchip'}, nn(x)) : glyph(x)));
-  const add = x => { buf.push(x); playNote(custom ? x : tokMidi(x), 0.45); renderSongEdit(); };
+  const add = x => { buf.push(x); if (custom && ui.song.durs) ui.song.durs.push(1); playNote(custom ? x : tokMidi(x), 0.45); renderSongEdit(); };
   let input;
   if (custom){
     const notes = [...new Set(state.steps.filter(s => s.note != null).map(s => s.note))].sort((a, b) => a - b);
@@ -1150,21 +1277,24 @@ function renderSongEdit(){
     if (!buf.length) return;
     if (custom){
       const name = (ui.song.name || '').trim() || 'My song';
-      if (sg){ const c = state.custom.find(x => x.id === sg.id); c.name = name; c.notes = buf.slice(); }
-      else { const id = 'u' + Date.now().toString(36); state.custom.push({id, name, notes: buf.slice()}); ui.song.id = id; }
+      const durs = ui.song.durs && ui.song.durs.length === buf.length ? ui.song.durs.slice() : null, bpm = durs ? ui.song.bpm || null : null;
+      if (sg){ const c = state.custom.find(x => x.id === sg.id); c.name = name; c.notes = buf.slice(); c.durs = durs; c.bpm = bpm; }
+      else { const id = 'u' + Date.now().toString(36); state.custom.push({id, name, notes: buf.slice(), durs, bpm}); ui.song.id = id; }
+      if (bpm) ui.tempo = bpm;
+      ui.song.durs = undefined;
     } else state.songs[sg.id] = {seq: buf.slice()};
     commit(); ui.song.view = 'song'; ui.song.step = 0; renderSongs(); refreshStage();
   };
   const removeLabel = custom ? 'Delete song' : 'Lock again';
   put(p, 
-    el('button', {type:'button', class:'btn ghost', onclick: () => { ui.song.view = sg && isUnlocked(sg) ? 'song' : 'list'; ui.confirm = null; renderSongs(); refreshStage(); }}, '‹ Back'),
+    el('button', {type:'button', class:'btn ghost', onclick: () => { ui.song.view = sg && isUnlocked(sg) ? 'song' : 'list'; ui.confirm = null; ui.song.durs = undefined; renderSongs(); refreshStage(); }}, '‹ Back'),
     el('h2', {style:'margin-top:6px'}, sg ? sg.name : 'New song'),
-    el('p', {class:'lede', style:'margin-top:6px'}, custom ? 'Build a tune from the notes your ocarina plays.' : 'Enter the buttons in the order the game showed them when you learned this song.'),
-    nameInput, seq, input,
+    el('p', {class:'lede', style:'margin-top:6px'}, custom ? 'Import a full melody from note names or a MIDI file, or tap notes in one by one.' : 'Enter the buttons in the order the game showed them when you learned this song.'),
+    nameInput, custom ? importBox() : null, seq, input,
     el('div', {class:'row'},
       el('button', {type:'button', class:'btn primary', disabled: !buf.length, onclick: save}, sg && isUnlocked(sg) ? 'Save' : 'Unlock song'),
-      el('button', {type:'button', class:'btn', disabled: !buf.length, onclick: () => { buf.pop(); renderSongEdit(); }}, '⌫ Undo'),
-      el('button', {type:'button', class:'btn ghost', disabled: !buf.length, onclick: () => { buf.length = 0; renderSongEdit(); }}, 'Clear'),
+      el('button', {type:'button', class:'btn', disabled: !buf.length, onclick: () => { buf.pop(); if (ui.song.durs) ui.song.durs.pop(); renderSongEdit(); }}, '⌫ Undo'),
+      el('button', {type:'button', class:'btn ghost', disabled: !buf.length, onclick: () => { buf.length = 0; ui.song.durs = null; ui.importMsg = ''; renderSongEdit(); }}, 'Clear'),
       sg && isUnlocked(sg) ? el('button', {type:'button', class:'btn ghost danger', onclick: () => { ui.confirm = 'song'; renderSongEdit(); }}, removeLabel) : null
     ),
     ui.confirm === 'song' && sg ? el('div', {class:'confirmbox', style:'margin-top:10px'}, el('span', {}, custom ? 'Delete "' + sg.name + '"?' : 'Forget the buttons for ' + sg.name + '?'),

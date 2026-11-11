@@ -6,6 +6,7 @@ A single-page trainer for a 3D-printed ocarina. Everything lives in `index.html`
 - **Calibrate** each fingering for your own print. With the microphone on, the page detects the pitch you play, saves it, and moves to the next fingering once the note is steady. You can also pick notes by hand or match them by ear with the pitch slider.
 - **Chart** of every note your ocarina plays, lowest to highest, with a diagram per fingering.
 - **Songs**: unlock a song by entering the button sequence the game shows you. Each button is mapped to its pitch (L = D5, R = F5, A = A5, Y = B5, X = D6; N64: A, ▼, ▶, ◀, ▲) and then to your calibrated fingering. *Key shift* and *Auto-fit* move songs onto the notes your ocarina actually has. With *Listen* on, the song advances when you play the right note.
+- **Full songs**: *Add a full song* imports a melody from pasted note names (`D5 F5 D6 - C6 …`) or a MIDI file. MIDI keeps the rhythm and tempo; the melody is shifted by octaves to fit your ocarina.
 - **Holes**: move, resize, add or remove holes so the model matches your print.
 
 Your setup is stored in the browser (`localStorage`). Use *Holes → Backup* to move it to another device.
